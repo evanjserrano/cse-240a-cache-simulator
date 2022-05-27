@@ -98,35 +98,60 @@ void init_cache()
     l2cache = (tagstore**)calloc(l2cacheSets * l2cacheAssoc, sizeof(tagstore));
 }
 
-void update_lru(tagstore* line, uint32_t assoc, uint32_t tag, uint16_t lru_val)
+/**
+ * @brief Get the correct entry of the cache if it exists. Otherwise, get the
+ * location it should be inserted.
+ *
+ * @param cacheline pointer to list of cache blocks (tagstores)
+ * @param assoc number of tagstores in the cacheline
+ * @param tag tag to look for
+ * @return uint32_t of the index in cacheline where entry should be
+ */
+uint32_t get_correct_entry(tagstore* cacheline, uint32_t assoc, uint32_t tag)
 {
     uint32_t i;
-    uint8_t inserted = FALSE;
+    uint32_t the_lru; // the true least recently used
     for (i = 0; i < assoc; i++)
     {
-        if (!line[i].valid)
+        tagstore entry = cacheline[i];
+
+        if (!entry.valid || entry.tag == tag)
         {
-            if (!inserted)
-            {
-                line[i].lru = 0;
-                line[i].valid = TRUE;
-                line[i].tag = tag;
-                inserted = TRUE;
-            }
+            return i;
         }
-        // cascade other lru values down
-        else if (line[i].lru < lru_val)
+        if (entry.lru == assoc - 1)
         {
-            line[i].lru++;
-        }
-        // update new entry's tag and lru
-        else if (line[i].lru == lru_val && !inserted)
-        {
-            line[i].lru = 0;
-            line[i].tag = tag;
-            inserted = TRUE;
+            the_lru = i;
         }
     }
+    return the_lru;
+}
+
+/**
+ * @brief Set the entry in the cacheline based on an index. Also update the lru
+ * values.
+ *
+ * @param cacheline pointer to list of cache tagstores
+ * @param assoc number of tagstores in the cacheline
+ * @param idx index of cacheline where tag should be stored
+ * @param tag tag to look for
+ */
+void set_entry(tagstore* cacheline, uint32_t assoc, uint32_t idx, uint32_t tag)
+{
+    uint16_t lru = cacheline[idx].lru;
+    uint32_t i;
+    for (i = 0; i < assoc; i++)
+    {
+        if (cacheline[i].valid &&
+            (!cacheline[idx].valid || cacheline[i].lru < lru))
+        {
+            cacheline[i].lru++;
+        }
+    }
+
+    cacheline[idx].lru = 0;
+    cacheline[idx].valid = 1;
+    cacheline[idx].tag = tag;
 }
 
 // Perform a memory access through the icache interface for the address 'addr'
@@ -147,86 +172,22 @@ uint32_t icache_access(uint32_t addr)
     uint32_t tag = (addr >> (block_bits + id_bits) & ((1 << tag_bits) - 1));
 
     tagstore* cacheline = CACHEIDX(icache, id);
-    uint32_t i;
-    // look for tag
-    for (i = 0; i < icacheSets; i++)
-    {
-        tagstore t = cacheline[i];
-        // cache hit
-        if (t.valid && t.tag == tag)
-        {
-            // update lru
-            update_lru(cacheline, icacheAssoc, tag, t.lru);
-            return icacheHitTime;
-        }
-    }
 
+    // cache + tag --> entry idx of block placement
+    uint32_t idx = get_correct_entry(cacheline, icacheAssoc, tag);
+
+    uint32_t penalty = 0;
     // cache miss
-    uint32_t penalty = l2cache_access(addr);
-    icachePenalties += penalty;
-    icacheMisses++;
-    // update lru
-    // icacheAssoc - 1 is the least recently used
-    update_lru(cacheline, icacheAssoc, tag, icacheAssoc - 1);
+    if (!cacheline[idx].valid || cacheline[idx].tag != tag)
+    {
+        icacheMisses++;
+        icachePenalties += (penalty = l2cache_access(addr));
+    }
+
+    // cache + tag + idx. enters into cache and updates lru
+    set_entry(cacheline, icacheAssoc, idx, tag);
+
     return icacheHitTime + penalty;
-}
-
-uint32_t get_correct_entry(tagstore* cacheline, uint32_t assoc, uint32_t tag)
-{
-    uint32_t i;
-    for (i = 0; i < assoc; i++)
-    {
-        tagstore entry = cacheline[i];
-        if (entry.valid && entry.tag == tag)
-        {
-            return i;
-        }
-    }
-    for (i = 0; i < assoc; i++)
-    {
-        tagstore entry = cacheline[i];
-        if (!entry.valid)
-        {
-            return i;
-        }
-    }
-    for (i = 0; i < assoc; i++)
-    {
-        tagstore entry = cacheline[i];
-        if (entry.lru == assoc - 1)
-        {
-            return i;
-        }
-    }
-    puts("ERR: SHOULDN'T BE HERE");
-    return 0;
-}
-
-void set_entry(tagstore* cacheline, uint32_t assoc, uint32_t idx, uint32_t tag)
-{
-    uint16_t lru = cacheline[idx].lru;
-    uint32_t i;
-    if (lru == assoc - 1)
-        for (i = 0; i < assoc; i++)
-        {
-            cacheline[i].lru++;
-        }
-    else if (!cacheline[idx].valid)
-        for (i = 0; i < assoc; i++)
-        {
-            if (cacheline[i].valid)
-                cacheline[i].lru++;
-        }
-    else
-        for (i = 0; i < assoc; i++)
-        {
-            if (cacheline[i].valid && cacheline[i].lru < lru)
-                cacheline[i].lru++;
-        }
-
-    cacheline[idx].lru = 0;
-    cacheline[idx].valid = 1;
-    cacheline[idx].tag = tag;
 }
 
 // Perform a memory access through the dcache interface for the address 'addr'
@@ -251,13 +212,18 @@ uint32_t dcache_access(uint32_t addr)
     // cache + tag --> entry idx of block placement
     uint32_t idx = get_correct_entry(cacheline, dcacheAssoc, tag);
 
-    if (cacheline[idx].tag != tag)
+    uint32_t penalty = 0;
+    // cache miss
+    if (!cacheline[idx].valid || cacheline[idx].tag != tag)
+    {
         dcacheMisses++;
+        dcachePenalties += (penalty = l2cache_access(addr));
+    }
 
     // cache + tag + idx. enters into cache and updates lru
     set_entry(cacheline, dcacheAssoc, idx, tag);
 
-    return memspeed;
+    return dcacheHitTime + penalty;
 }
 
 // Perform a memory access to the l2cache for the address 'addr'
@@ -278,44 +244,20 @@ uint32_t l2cache_access(uint32_t addr)
     uint32_t tag = (addr >> (block_bits + id_bits) & ((1 << tag_bits) - 1));
 
     tagstore* cacheline = CACHEIDX(l2cache, id);
-    uint32_t i;
-    // look for tag
-    for (i = 0; i < l2cacheSets; i++)
-    {
-        tagstore t = cacheline[i];
-        // cache hit
-        if (t.valid && t.tag == tag)
-        {
-            // update lru
-            update_lru(cacheline, l2cacheAssoc, tag, t.lru);
-            return l2cacheHitTime;
-        }
-    }
 
+    // cache + tag --> entry idx of block placement
+    uint32_t idx = get_correct_entry(cacheline, l2cacheAssoc, tag);
+
+    uint32_t penalty = 0;
     // cache miss
-    l2cachePenalties += memspeed;
-    l2cacheMisses++;
-    // update lru
-    // l2cacheAssoc - 1 is the least recently used
-    update_lru(cacheline, l2cacheAssoc, tag, l2cacheAssoc - 1);
-    return l2cacheHitTime + memspeed;
-}
-
-void print_l2cache()
-{
-    // number of bits for each part
-    uint8_t block_bits = log2(blocksize);
-    uint8_t id_bits = log2(dcacheSets);
-    uint8_t tag_bits = ADDR_SIZE - id_bits - block_bits;
-
-    for (int id = 0; id < dcacheSets; id++)
+    if (!cacheline[idx].valid || cacheline[idx].tag != tag)
     {
-        tagstore* tag = CACHEIDX(dcache, id);
-        printf("%#04x:\t", id);
-        for (int t = 0; t < dcacheAssoc; t++)
-        {
-            printf("%01d,%#06x,%01d\t", tag[t].valid, tag[t].tag, tag[t].lru);
-        }
-        printf("\n");
+        l2cacheMisses++;
+        l2cachePenalties += (penalty = memspeed);
     }
+
+    // cache + tag + idx. enters into cache and updates lru
+    set_entry(cacheline, l2cacheAssoc, idx, tag);
+
+    return l2cacheHitTime + penalty;
 }
