@@ -93,9 +93,19 @@ void init_cache()
     l2cachePenalties = 0;
 
     // Initialize Cache Simulator Data Structures
-    icache = (tagstore**)calloc(icacheSets * icacheAssoc, sizeof(tagstore));
-    dcache = (tagstore**)calloc(dcacheSets * dcacheAssoc, sizeof(tagstore));
-    l2cache = (tagstore**)calloc(l2cacheSets * l2cacheAssoc, sizeof(tagstore));
+    if (icacheSets == 0 || icacheAssoc == 0)
+        icache = NULL;
+    else
+        icache = (tagstore**)calloc(icacheSets * icacheAssoc, sizeof(tagstore));
+    if (dcacheSets == 0 || dcacheAssoc == 0)
+        dcache = NULL;
+    else
+        dcache = (tagstore**)calloc(dcacheSets * dcacheAssoc, sizeof(tagstore));
+    if (l2cacheSets == 0 || l2cacheAssoc == 0)
+        l2cache = NULL;
+    else
+        l2cache =
+            (tagstore**)calloc(l2cacheSets * l2cacheAssoc, sizeof(tagstore));
 }
 
 /**
@@ -159,6 +169,8 @@ void set_entry(tagstore* cacheline, uint32_t assoc, uint32_t idx, uint32_t tag)
 //
 uint32_t icache_access(uint32_t addr)
 {
+    if (icache == NULL)
+        return memspeed;
     icacheRefs++;
 
     // number of bits for each part
@@ -195,6 +207,8 @@ uint32_t icache_access(uint32_t addr)
 //
 uint32_t dcache_access(uint32_t addr)
 {
+    if (dcache == NULL)
+        return memspeed;
     dcacheRefs++;
 
     // number of bits for each part
@@ -231,6 +245,8 @@ uint32_t dcache_access(uint32_t addr)
 //
 uint32_t l2cache_access(uint32_t addr)
 {
+    if (l2cache == NULL)
+        return memspeed;
     l2cacheRefs++;
 
     // number of bits for each part
