@@ -172,7 +172,7 @@ void set_entry(tagstore* cacheline, uint32_t assoc, uint32_t idx, uint32_t tag)
 uint32_t icache_access(uint32_t addr)
 {
     if (icache == NULL)
-        return memspeed;
+        return l2cache_access(addr);
     icacheRefs++;
 
     // number of bits for each part
@@ -210,7 +210,7 @@ uint32_t icache_access(uint32_t addr)
 uint32_t dcache_access(uint32_t addr)
 {
     if (dcache == NULL)
-        return memspeed;
+        return l2cache_access(addr);
     dcacheRefs++;
 
     // number of bits for each part
