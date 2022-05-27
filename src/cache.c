@@ -69,9 +69,9 @@ typedef struct
     (tagstore*)(cache +                                                        \
                 (id * cache##Assoc * sizeof(tagstore) / sizeof(tagstore*)))
 
-tagstore** icache;
-tagstore** dcache;
-tagstore** l2cache;
+tagstore** icache = NULL;
+tagstore** dcache = NULL;
+tagstore** l2cache = NULL;
 
 //------------------------------------//
 //          Cache Functions           //
@@ -97,10 +97,12 @@ void init_cache()
         icache = NULL;
     else
         icache = (tagstore**)calloc(icacheSets * icacheAssoc, sizeof(tagstore));
+
     if (dcacheSets == 0 || dcacheAssoc == 0)
         dcache = NULL;
     else
         dcache = (tagstore**)calloc(dcacheSets * dcacheAssoc, sizeof(tagstore));
+
     if (l2cacheSets == 0 || l2cacheAssoc == 0)
         l2cache = NULL;
     else
